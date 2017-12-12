@@ -1,0 +1,776 @@
+StackExchange Post Exploratory Analysis by Nathan Margaglio
+========================================================
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+library(ggplot2)
+library(stringr)
+library(lubridate)
+library(plyr)
+library(dplyr)
+library('GGally')
+```
+
+```{r echo=FALSE, Load_the_Data}
+qr <- read.csv('query_r_pandas_matlab.csv')
+
+tagParse <- function(s) {
+    # We need to categorize posts by tags manually
+  # This looks for the tags in the 'Tags' field
+  # and returns a pretty version of the tag
+  if (grepl("<pandas>",s)) {
+    return("python")
+  }
+  if (grepl("<r>",s)) {
+    return("r")
+  }
+  if (grepl("<matlab>",s)) {
+    return("matlab")
+  }
+  return("other")
+}
+
+tag_cat <- apply(matrix(qr$Tags), 1, tagParse)
+f_tag <- factor(tag_cat)
+
+relativeFrequency <- function(data, group, var) {
+  new_data <- group_by_(data, group) %>%
+  group_by_(group, var) %>%
+  summarise (n = n()) %>%
+  mutate(prop = n / sum(n))
+  
+  return(new_data)
+}
+
+qr$MainTags <- f_tag
+
+qr$CreationDate.wday <- wday(qr$CreationDate, label=TRUE)
+qr$CreationDate.hour <- hour(qr$CreationDate)
+
+qr$Title.char_per_word <- (nchar(as.character(qr$Title))/(str_count(qr$Title, '\\s+')+1))
+qr$Title.char_count <- nchar(as.character(qr$Title))
+qr$Title.word_count <- str_count(qr$Title, '\\s+')+1
+
+qr$Body.word_count <- str_count(qr$Body, '\\s+')+1
+qr$Body.char_per_word <- (nchar(as.character(qr$Body))/(str_count(qr$Body, '\\s+')+1))
+
+qr$Tags.count <- str_count(qr$Tags, '<')
+
+qr.closed <- subset(qr, ClosedDate != '')
+qr.closed$ClosedDate.wday <- wday(qr.closed$ClosedDate, label=TRUE)
+qr.closed$time_to_close <- as.numeric(difftime(qr.closed$ClosedDate, qr.closed$CreationDate, units="mins"))
+qr.closed$ClosedDate.hour <- hour(qr.closed$ClosedDate)
+
+qr.python <- subset(qr, MainTags == 'python')
+qr.r <- subset(qr, MainTags == 'r')
+qr.matlab <- subset(qr, MainTags == 'matlab')
+```
+
+> The data we will be exploring comes from the StackExchange, a network of 
+question-and-answer websites on topics in varied fields.  Specifically, we will 
+be examining data related to posts users have made to StackOverflow, a subsite 
+of StackExchange dedicated to programming and development.
+
+> StackOverflow is arguably the most popular forum for developer Q&A.  The 
+decision to examine the data from the site comes not only from the popularity 
+of the site (so that we have much data to examine), but also from the idea that 
+this data will be a good representation of the programming community as a whole.
+
+> Recently, StackExchange offered Data Explorer, an open source tool for running
+arbitrary queries against public data from the Stack Exchange network.  This
+allows us to gather data quickly and easily from the site via SQL queries, which
+is where the data we will be using for this analysis comes from.
+
+> Specifically, we're going to be looking at posts tagged with R, Pandas (a data
+analysis library for Python), and Matlab from the year 2016.  The idea is to
+examine posts related to data analysis while considering the differences in
+programming languages.  We also limit our selection to posts with answers
+(otherwise we will have too much data with too much noise).  The SQL command
+used to run the query is:
+
+> SELECT * FROM Posts WHERE 
+(Tags LIKE '%<r>%' OR Tags LIKE '%<pandas>%' OR Tags LIKE '%<matlab>%') AND 
+AcceptedAnswerId IS NOT NULL AND
+CreationDate BETWEEN '01/01/2016' AND '01/01/2017';
+
+> which can be run from the Data Explorer Site:
+
+> http://data.stackexchange.com/stackoverflow/queries
+
+> We hope to ultimately be able to find patterns in the StackExchange
+community's posting habits as well as the differences in the posting habits of
+the sub-communities of those users who are involved in data analysis using
+R, Python, and Matlab.
+
+# Univariate Plots Section
+
+```{r echo=FALSE, warning=FALSE, Univariate_Plots}
+ggplot(qr, aes(Score)) +
+  geom_bar() +
+  scale_x_continuous(limits=c(-10,10))
+```
+
+> Here we plot the count of the score for each post.  We set our x limits to be 
+-10 and 10, and we notice a very clear normal distribution centered at 0.
+
+```{r echo=FALSE}
+summary(qr$Score)
+```
+
+> Here we see the summary of Score in the dataset, with the Median of 0 and 
+Mean of 0.7726 aligning with our findings in the above plot.
+
+
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(qr, aes(ViewCount)) +
+  geom_bar() +
+  scale_x_continuous(limits=c(-1,500))
+```
+
+```{r echo=FALSE, warning=FALSE}
+summary(qr$ViewCount)
+```
+
+> When plotting the View Count of each post, we see a positively skewed bar
+chart with a median of 87 and mean of 253.4.
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(qr, aes(AnswerCount)) +
+  geom_bar() +
+  scale_x_continuous(limits=c(-1,10))
+```
+
+> Now we plot the Answer Count of each post, and we see a very positively skewed
+bar chart with a very small range.  This set has a median of 1 and mean of
+1.152, which contrasts the View Counts in the set significantly.
+
+```{r echo=FALSE, warning=FALSE}
+summary(qr$AnswerCount)
+```
+
+
+> Our dataset not only has a number of quanititative variables like we've seen 
+above, but also temporal variables.  Notably, the datetime of the posts creation
+and the closing is included and can be examined in a number of ways.
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(qr, aes(CreationDate.wday)) +
+  geom_bar()
+```
+
+> Here we see when posts are created during the week.  There is a clear
+relationship between the number of posts being created and whether or not it's
+the weekend.
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(qr.closed, aes(CreationDate.wday)) +
+  geom_bar()
+```
+
+> First, we note that not every post is closed.  So, we subset our original set 
+so that we only work with posts which are closed and plot it like before (top).
+We see a slight difference in the distribution of the creation of these posts
+over the work week.  In the entire set, the peak day of posting is on Wednesday,
+however, we see for closed posts, the creation date is more likely to be on
+Tuesday or Thursday.
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(qr.closed, aes(ClosedDate.wday)) +
+  geom_bar()
+```
+
+> Now we plot Closed Dates of posts, and we see that Tuesday and Friday are days
+where it is most probable for a post to be closed.  Again, the weekend shows a 
+significant decrease in activity on the site.
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr.closed, aes(time_to_close)) +
+  geom_histogram(binwidth = 0.05) +
+  scale_x_log10()
+```
+
+> Here, we've taken the difference (in minutes) of the Creation datetime and the
+Closed datetime.  Most closed posts are closed within the first two hours.
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr, aes(CreationDate.hour)) +
+  geom_bar()
+```
+
+> Now we plot the hour of the day in which the posts were created.  There is a 
+clear trend here, with 4 in the morning being the least active time for the site
+and 3 in the afternoon being the most active.
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr.closed, aes(ClosedDate.hour)) +
+  geom_bar()
+```
+
+> Surprisingly, the hour of the day in which posts are closed is less clear.
+Unlike the hour of creation, busy activity is almost constant after 6 in the 
+morning until about 9 at night, where it drops off for the rest of the 
+night/morning.
+
+> The last set of variables I want to examine in this section are the Tags,
+Title, and Body of each post.  On StackExcahnge, every post is created with a 
+title, which works to summarize the post, a body, used to elaborate and provide
+details, and a set of tags, used to categorize the post.  Our data has already
+been subsetted from the rest of the data on the site based on having 'r' as a 
+tag, but a post can have multiple tags, so we can further examine that feature.
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr, aes(Body.word_count)) +
+  geom_bar() +
+  scale_x_continuous(limits=c(0,1000))
+```
+
+```{r echo=FALSE, warning=FALSE}
+summary(qr$Body.word_count)
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr, aes(Body.char_per_word)) +
+    geom_histogram(binwidth = 0.25) +
+  scale_x_continuous(limits=c(2,15))
+```
+```{r echo=FALSE, warning=FALSE}
+summary(qr$Body.char_per_word)
+```
+
+> Most posts contain about 150 words, with a median word count of 138 and a 
+mean word count of 176.5.  When looking at the amount of characters per word in
+the post body, we have an average 7.727 characters per word (with a median of
+7.395 characters per word).
+
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr, aes(Title.word_count)) +
+  geom_bar() +
+  scale_x_continuous(limits=c(0,30))
+```
+
+```{r echo=FALSE, warning=FALSE}
+summary(qr$Title.word_count)
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr, aes(Title.char_count)) +
+  geom_bar() +
+  scale_x_continuous(limits=c(0,150))
+```
+
+```{r echo=FALSE, warning=FALSE}
+summary(qr$Title.char_count)
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr, aes(Title.char_per_word)) +
+  geom_histogram(binwidth = 0.25) +
+  scale_x_continuous(limits=c(2,10))
+```
+```{r echo=FALSE, warning=FALSE}
+summary(qr$Title.char_per_word)
+```
+
+> Most post's title contain about 9 words, with a median word count of 9 and a 
+mean word count of 9.148.  The median amount of characters used is 51, and the 
+average amount of characters used it 53.58.  This leads to an average 6.024
+characters per word in the title (or a median of 5.875 characters per word).
+
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(qr, aes(Tags.count)) +
+  geom_bar() +
+  scale_x_continuous(limits=c(0,7))
+```
+
+```{r echo=FALSE, warning=FALSE}
+summary(qr$Tags.count)
+```
+
+> Posts must contain at least one tag, but users can select multiple tags based
+on the content of their post.  Most posts use about 3 tags, with the median
+being 3 and the mean being 2.85.
+
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+
+There are 40,360 posts in the dataset with 22 original variables.  Some of these
+variables, such as Id, AcceptedAnswerId, and OwnerUserId, are used for reference
+and can't be used directly in analysis.  These leaves us with the following
+features per observation that we can directly use:
+
+- PostTypeId
+- CreationDate
+- DeletionDate
+- Score
+- ViewCount
+- Body
+- LastEditDate
+- LastActivityDate
+- Title
+- Tags
+- AnswerCount
+- CommentCount
+- FavoriteCount
+- ClosedDate
+- CommunityOwnedDate
+
+Most of these variables aren't present for many of the observations due to the 
+nature of the site (for example, many posts don't get edited, so their
+LastEditDate is null).  So we have to be conscientious of this fact when
+exploring the dataset as a whole.
+
+### What is/are the main feature(s) of interest in your dataset?
+
+On StackExchange, a posts "value" can be roughly thought of as its
+contribution to the community, usually in the form of a question people think
+is worth answering and, of course, the answers given.  This "value" is typically
+in corresponence with the post's Score.  A post starts with a score of 0, and
+each user is allowed to vote a score either up or down once, with a higher score
+reflecting a better post.  This makes the score a key variable in our analysis.
+
+### What other features in the dataset do you think will help support your \
+investigation into your feature(s) of interest?
+
+Another main feature is the various dates associated with a post,
+specifically the Creation Date and the Closed Date.  Every post has a a creation
+date (which is the datetime in which the post was orginally submitted), but if a
+post is closed (e.g., it is marked as answered), then it will also have a closed
+date associate with it.
+
+Each post is comprised of a title and body, which is comes in the form of text.
+These features are clearly important since they comprise the information for 
+which a post is rated on.  Posts also contain at least one tag, which is a broad
+subject in which the post is related.
+
+### Did you create any new variables from existing variables in the dataset?
+
+Yes, since the title and body variables are just text (with the body allowing
+for HTML markup), I had to abstract and investigate features of these variables,
+including the counts of words and characters for each.
+
+Another important variable created for this analysis is the "MainTag" factor.
+This was created by parsing the Tags variable for one of three tags a post in
+this set has: "pandas", "r", and "matlab".  This helps us understand the subject
+of as post.
+
+# Bivariate Plots Section
+
+```{r echo=FALSE, warning=FALSE, Bivariate_Plots}
+set.seed(20022012)
+qr_samp <-subset( qr.closed[sample(1:length(qr.closed$Id), 100), ], 
+                  select = c(Score, ViewCount, AnswerCount, CommentCount, 
+                             MainTags, CreationDate.wday, ClosedDate.wday, 
+                             CreationDate.hour, ClosedDate.hour, Body.word_count,
+                             Title.word_count, Tags.count, time_to_close))
+
+ggcorr(qr_samp)
+```
+
+> To begin the bivariate exploration, I use the 'ggcorr' function to produce 
+this heatmap matrix using a random sample of data.  Here, I'm interested in 
+seeing any patterns that emerge from comparing these combinations of variables
+in different ways.  The result leads to some interesting correlations that I 
+will explore in this section.
+
+```{r echo=FALSE}
+ggplot(qr.closed, aes(x=Score, fill=CreationDate.wday)) +
+    geom_bar() +
+   facet_wrap( ~ CreationDate.wday, ncol=2) +
+  scale_x_continuous(limits=c(-5,5))
+```
+
+> Plotting a bar chart of the post's score for everyday of the week during which 
+it was created leads to the above array of plots.  We can notice that, although 
+the distribution of scores are similar per day, there are significant 
+differnces.  For example, Tuesday and Wednesday seem to be more negatively 
+skewed, while Friday and Saturday are more uniform.
+
+```{r echo=FALSE}
+ggplot(relativeFrequency(qr.closed, 'CreationDate.wday', 'Score'), 
+       aes(Score, prop, fill=factor(CreationDate.wday))) +
+  geom_bar(stat="identity")  +
+  facet_wrap( ~ CreationDate.wday, ncol=2) +
+  scale_x_continuous(limits=c(-10,10))
+
+```
+
+> In a similar fashion to the above plot, we now plot the proportion of the
+scores seen for every day of the week in which the post was created.  This 
+communicates the same data as the previous plot in a cleaner manner.  For 
+example, we can now see how scores on Saturday are much more likely to be 0
+relative the other days.
+
+```{r echo=FALSE}
+ggplot(relativeFrequency(qr.closed, 'ClosedDate.wday', 'Score'), 
+       aes(Score, prop, fill=factor(ClosedDate.wday))) +
+  geom_bar(stat="identity")  +
+  facet_wrap( ~ ClosedDate.wday, ncol=2) +
+  scale_x_continuous(limits=c(-10,10))
+```
+
+> Here, we plot the post's score for every day of the week in which the post was
+closed (instead of open, like above).
+
+```{r echo=FALSE}
+ggplot(qr, aes(Score, fill=factor(MainTags))) +
+  geom_bar(position="dodge") +
+  scale_x_continuous(limits=c(-5,5))
+```
+
+> Here we plot the score factored by our main tags.  We see that there are 
+more posts with 'r' as the main tag versus the other two, and 'matlab' 
+having the least amount of posts.
+
+```{r echo=FALSE}
+qr.by_tag <- group_by(qr, MainTags)
+
+ggplot(relativeFrequency(qr.by_tag, 'MainTags', 'Score'), 
+       aes(Score, prop, fill=factor(MainTags))) +
+  geom_bar(stat="identity",position='dodge')  +
+  scale_x_continuous(limits=c(-5,5))
+```
+
+> This plot is similar to the above plot, except instead of plotting on raw
+counts of posts for each score, we plot the proportion of count of each score
+relative to the total amount of posts for each main tag.  This plot is much more
+illuminating of the differences of these tags, with posts with 'pandas'
+as it's main tag having '1' being the leading score while 'r' and 'matlab' have
+'0' as the leading score.
+
+```{r echo=FALSE}
+qr.closed_by_tag <- group_by(qr.closed, MainTags)
+
+ggplot(relativeFrequency(qr.closed_by_tag, 'MainTags', 'Score'), 
+       aes(Score, prop, fill=factor(MainTags))) +
+  geom_bar(stat="identity",position='dodge')  +
+  scale_x_continuous(limits=c(-5,5))
+```
+
+> This plot is similar to the above one, except we only consider posts that are
+closed.  Notice the higher proportion of lower scores versus the previous plots.
+
+```{r echo=FALSE}
+ggplot(qr, aes(MainTags, Score)) +
+  geom_boxplot()+
+  scale_y_continuous(limits=c(-5,5))
+```
+
+> Now we use a box plot to examine the distribution of scores per main tag.
+We notice how the scores are more dense in different quantiles for each of the
+maint tags.
+
+```{r echo=FALSE}
+ggplot(relativeFrequency(qr.by_tag, 'MainTags', 'Body.word_count'), 
+       aes(Body.word_count, prop, fill=factor(MainTags))) +
+  geom_bar(stat="identity")  +
+  scale_x_continuous(limits=c(0,1000)) +
+  facet_wrap( ~ MainTags, ncol=1)
+```
+
+> Now we plot the proportion of word counts in the body of each post per main
+tag.  We can quickly see 'matlab' posts have word counts more likely to be found
+on the lower end of the scale, while 'r' posts are more distributed.
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(relativeFrequency(qr, 'MainTags', 'Title.word_count'), 
+       aes(Title.word_count, prop, fill=factor(MainTags))) +
+  geom_bar(stat="identity")  +
+  scale_x_continuous(limits=c(0,30)) +
+  facet_wrap( ~ MainTags, ncol=1)
+```
+
+> Similar to the above plot, we now look at the proportion of word counts in the
+title of each post per main tag.  Here, we see the posts have much more similar
+distributions.
+
+
+```{r echo=FALSE}
+ggplot(relativeFrequency(qr, 'MainTags', 'Tags.count'), 
+       aes(Tags.count, prop, fill=factor(MainTags))) +
+  geom_bar(stat="identity")  +
+  scale_x_continuous(limits=c(0,7)) +
+  facet_wrap( ~ MainTags, ncol=1)
+```
+
+> And finally we look at the number of tags per post per main tag.  We notice
+immedietly that 'python' has very little posts with only one tag, but this is
+most likely a result of the fact that the 'python' subset of data was found by
+looking at posts with 'pandas' as a tag.  These posts will most likely, at a
+minimum, include both 'pandas' and 'python' as tags, hence the descrepency.
+
+> Otherwise, we note the the three distributions are similar, with 'r' most
+likely to have two tags, 'python' most likely to have three, and 'matlab' to be
+about the same.
+
+>  We also notice that it is more likely to find four or five tags in a 'python'
+post versus the other two, and 'r' posts with five posts are not common relative
+to the other two main tags.
+
+
+# Bivariate Analysis
+
+The most prominent pattern found in these relationships is how the score of
+posts vary relative to each of the main tags the post belongs to.  We see that
+the proportion of posts with a score of '0' is much higher for 'matlab' than it
+is for 'python' and 'r' (with almost half of all 'matlab' posts having a score
+of '0' and only about a quater of 'python' posts having a score of '0', with
+'r' in between).
+
+We then see, as we consider higher scores, that 'python' posts are more likely
+to be scored higher relative to the other two and 'matlab' being scored lowered
+than the other two.
+
+This may have to do with the underlying user base for each language.  It may be
+that there are simply more Python users active on StackExchange than the are
+R or Matlab users, causing the liklihood of someone raising the score to be 
+higher.
+
+It's also worth noting that 'python' posts are significantly less likely to have
+negative scores relative to the other tags.  This is interesting in regards to
+the above theory, because different user counts don't necessarily explain why
+'python' posts recieve proportionally less negative scores than the other tags.
+
+Other relationships can be clearly seen, too.  The fact that posts seem much
+more likely to recieve a score of '0' on a Saturday versus the other days of the
+week may have to do with the amount of users on StackExchange during the week
+versus during the weekend (less active users mean less posts get scored).
+
+The word count in the body of each post per main tag is interesting as well.  It
+would seem less words are required to convey a question for a 'matlab' post than
+for the other two tags.
+
+# Multivariate Plots Section
+
+```{r echo=FALSE}
+ggplot(qr.closed, 
+       aes(Title.word_count, Score, color=MainTags)) +
+  geom_point(position = "jitter", alpha=0.5) + 
+  scale_x_continuous(limits = c(0,25))+ 
+  scale_y_continuous(limits = c(0,10)) +
+  geom_smooth()
+```
+
+> In the preceding plot, we compare the amount of words in the title of a post
+with the score of the post, and color each point to correspond with the post's
+main tag.  We find no descernable pattern (i.e., there doesn't seem to be a
+significant relationship between word count and scores).
+
+```{r echo=FALSE}
+cor(qr.closed$Score, qr.closed$Title.word_count)
+```
+
+> We confirm by noting that the correlation coefficient is 0.01264337, which
+is very low.
+
+```{r echo=FALSE}
+ggplot(qr.closed, 
+       aes(Body.word_count, Score, color=MainTags)) +
+  geom_point(position = "jitter", alpha=0.5) + 
+  scale_x_continuous(limits = c(0,250))+ 
+  scale_y_continuous(limits = c(0,10)) +
+  geom_smooth()
+```
+
+> Next, we plot something similar to above, but instead of considering the word
+count of the title of the post, we look at the word count of the body of the
+post.  Again, we don't see a strong correlation.
+
+```{r echo=FALSE}
+cor(qr.closed$Score, qr.closed$Body.word_count)
+```
+
+> We confirm by noting that the correlation coefficient is 0.06576517, which
+is very low.
+
+```{r echo=FALSE}
+ggplot(qr.closed, 
+       aes(Title.word_count, ViewCount, color=MainTags)) +
+  geom_point(position = "jitter", alpha=0.5) + 
+  scale_x_continuous(limits = c(0,25))+ 
+  scale_y_continuous(limits = c(0,200)) +
+  geom_smooth()
+```
+
+```{r echo=FALSE, Multivariate_Plots}
+ggplot(qr.closed, 
+       aes(Title.word_count, AnswerCount, color=MainTags)) +
+  geom_point(position = "jitter", alpha=0.5) + 
+  scale_x_continuous(limits = c(0,25))+ 
+  scale_y_continuous(limits = c(0,5)) +
+  geom_smooth()
+```
+
+```{r echo=FALSE}
+ggplot(qr.closed, 
+       aes(Title.word_count, CommentCount, color=MainTags)) +
+  geom_point(position = "jitter", alpha=0.5) + 
+  scale_x_continuous(limits = c(0,25))+ 
+  scale_y_continuous(limits = c(0,5)) +
+  geom_smooth()
+```
+
+> In similar fashion, we examine the relationship between the word count of the
+title with the view count, answer count, and comment count, respectively.  And,
+similar to before, we don't notice any strong correlation.
+
+```{r echo=FALSE}
+cor(qr.closed$ViewCount, qr.closed$Title.word_count)
+```
+
+```{r echo=FALSE}
+cor(qr.closed$AnswerCount, qr.closed$Title.word_count)
+```
+
+```{r echo=FALSE}
+cor(qr.closed$CommentCount, qr.closed$Title.word_count)
+```
+# Multivariate Analysis
+
+During the multivariate analysis, I attempted to explore possible relationships
+between the amount of words used in the title and body of a post and the score,
+view count, answer count, and comment count of posts with respect to the main
+tags of the post.
+
+I was unable to find any strong correlation between these variables.  As a
+result, the only finding I can really attribute to these plots is that the 
+amount of views, comments, answers or the score of a post is independent of the
+amount of words used in the title or body of the post.  This is made even more
+apparent since it doesn't seem to matter which language (main tag) your post is
+related to.
+
+------
+
+# Final Plots and Summary
+
+### Plot One
+```{r echo=FALSE, Plot_One}
+ggplot(qr.closed, aes(time_to_close)) +
+  geom_histogram(binwidth = 0.05) +
+  scale_x_log10() +
+  labs(title = "Time It Takes for a Post to be Closed",
+       x = "Time (Log10(Minutes))",
+       y = "Number of Posts")
+```
+
+For the first plot, I want to give an idea of the "lifespan" of a typical post
+on StackExchange.  We see that most posts that are closed are closed in the
+first two hours of posting, which means that the audience of a post is very
+limited based on the time of day and day of week in which it is created.
+
+For example, if a post is created at 6:00 am on a Monday in New York, the post
+might not have as large an audience if it were posted a couple hours later (when
+users in California might be online).
+
+Although a post being closed indiciates that there is no need for anyone else to
+view it for the sake of providing an answer, it does raise the question of the 
+quality of answers given during a post's lifespan.
+
+
+### Plot Two
+```{r echo=FALSE, Plot_Two}
+ggplot(qr, aes(CreationDate.hour)) +
+  geom_bar() + 
+  labs(title = "Hour of Creation of Posts",
+       x = "Hour of Day (UTC)",
+       y = "Number of Posts")
+```
+
+Continuing our exploration of the "life" of a typical StackExchange post, we
+now examine the hour of day in which these posts are created.  We first note the
+very cyclical pattern in the above post which corresponds to a typical day for a
+person (i.e., most people are asleep at 3am and awake at 3pm).
+
+We see a sudden "jump" in posts at 9am.  This may correspond to roughly the time
+a large portion of users get to work/school and begin asking questions.  When we
+also consider the different timezones that are accessing the site, this jump may
+correspond to an increase in users from different timezones for different
+reasons (e.g., users in New York are coming back from lunch while users in 
+California are coming into work).
+
+We notice the height of posts being created is at 3pm and the valley of posts
+being created is at 4am.  This probably corresponds to the amount of people 
+who are awake and asleep respectively.
+
+So if posting in either one of these extremes might make a difference in the
+quality of answers, then we can see optimal times here.  It might be the case
+that posting when there aren't a lot of other new posts is ideal so that the
+question isn't buried.  On the other hand, it might be better to post during the
+peak of number of new posts since this might indicate more active users and, 
+thus, more people looking at your post.
+
+### Plot Three
+```{r echo=FALSE, Plot_Three}
+ggplot(relativeFrequency(qr.closed_by_tag, 'MainTags', 'Score'), 
+       aes(Score, prop, fill=factor(MainTags))) +
+  geom_bar(stat="identity",position='dodge')  +
+  scale_x_continuous(limits=c(-5,5)) +
+  labs(title = "Proportion of Scores per Main Tag",
+       x = "Score",
+       y = "Proportion of Posts with Main Tag",
+       fill = "Main Tag")
+```
+
+This plot now examines how different tags might affect the outcome of a post's
+score.  As described throughout this analysis, we can split our set of tags into
+three categories (matlab, python, and r) based on the tags used in the post.  We
+then plot the proportion of posts with a specific score per main tag relative
+to the total number of posts with that tag.  We must use proprotions here since
+we have signifcantly different numbers of posts with these tags, and can't
+compare raw counts.
+
+We notice that matlab posts are the most likely to have a score of 0.  This
+might be because Matlab is the least popular of these languages, so that
+questions aren't as likely to be voted on as the other two.  Conversely, python
+posts are least likely to have a score of 0, possibly because Python is the 
+most popular language.
+
+Looking at positive scores, we see Python posts are much more likely to recieve
+high scores versus the other two languages.  Matlab, on the other hand, is
+least likely.  Looking at negative scores, we see that the three lanugages start
+to even out in terms of proportionality.  This might indicate that "bad" posts
+are as likely in one language is they are in another.
+
+------
+
+# Reflection
+
+Overall, I am not very shocked by the results of this analysis.  It seems as
+though there aren't very strong trends in these properties of StackExchange
+posts, which isn't surprising.  A post on StackExchange, or any forum for that
+matter, has a value based mostly in content (that is, what is said in the post).
+
+Although we found some general trends in how posts are structure and their
+lifespans, there isn't much to be said about how their structure might influence
+things like the post's score or viewcount.
+
+When examining the main tags of these posts, we did find some interesting
+patterns; most noteably the proportion of scores for each tag.  This might be 
+a pathway to finding which languages or topics being posted on a site like
+StackExchange is more popular in general, although much more analysis of many
+more sources would be requried to do so.
+
+Looking forward, the next steps to properly analyzing StackExchange posts would
+be to analyze the content of theses posts directly.  This might be done in a
+number of ways, such as examining the text of the body of each post more
+thoroughly, such as with machine learning to find sentiment or topics in a post.
+
+In any case, StackExchange is a site full of very rich data that is ready to be
+explored, and this analysis, as basic as it is, shows that this is the case.
+
